@@ -124,6 +124,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.net.BindException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.SocketTimeoutException;
@@ -135,6 +136,7 @@ import java.nio.channels.ClosedByInterruptException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -793,11 +795,26 @@ public class JenkinsRule implements TestRule, MethodRule, RootAction {
      */
     protected ServletContext createWebServer2() throws Exception {
         JettyProvider jp = findJettyProvider();
-        JettyProvider.Context jpc = jp.createWebServer(localPort, contextPath, this::configureUserRealm);
+        JettyProvider.Context jpc;
+        try {
+            jpc = jp.createWebServer(localPort, contextPath, this::configureUserRealm);
+        } catch (Exception x) {
+            if (hasBindException(x)) {
+                LOGGER.log(Level.WARNING, "Socket may be open from a previous test; will retry", x);
+                Thread.sleep(Duration.ofSeconds(15).toMillis());
+                jpc = jp.createWebServer(localPort, contextPath, this::configureUserRealm);
+            } else {
+                throw x;
+            }
+        }
         localPort = jpc.localPort();
         server = jpc.server();
         LOGGER.log(Level.INFO, "Running on {0}", getURL());
         return jpc.servletContext();
+    }
+
+    private static boolean hasBindException(Throwable t) {
+        return t instanceof BindException || t != null && hasBindException(t.getCause());
     }
 
     private static JettyProvider findJettyProvider() {
